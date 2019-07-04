@@ -7,8 +7,9 @@ function pslq_step(H, A, B)
     D = make_D(H)
     E = make_E(D)
     H = D * H
-    gamma = 2.0
-    j = findmax(abs.(diag(H) .* gamma .^ (1:n-1)))[2]
+    γ = 2.0
+    δ = sqrt(3/4 - 1/γ^2)
+    j = findmax(abs.(diag(H) .* γ .^ (1:n-1)))[2]
     Rj = make_R(H, j)
     Gj = make_G(H, j)
     H = Rj * H * Gj
