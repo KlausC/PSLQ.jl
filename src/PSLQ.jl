@@ -1,7 +1,61 @@
 module PSLQ
 
+export pslq
+
 using LinearAlgebra
 
+function pslq(x::Vector{T}; criteria=nothing) where T<:Real
+    n = length(x)
+    H = make_H(x)
+    criteria = make_criteria(criteria, x)
+    B = Matrix(I*integertype(T)(1), n, n)
+    D = UnitLowerTriangular(similar(B)) # working area
+    iter = 0
+    result = (code=0, result=similar(B, n, 0))
+    while iter < criteria.itermax && result.code == 0
+        pslq_step!(H, B, D)
+        iter += 1    
+        result = convergence(x, H, B, criteria)
+    end
+    result
+end
+
+
+function convergence(x::Vector{T}, H::AbstractMatrix, B::Matrix, criteria::NamedTuple) where T
+    n = size(x, 1)
+    function xtb(j)
+        s1 = s2 = T(0)
+        for k = 1:n
+            bkjx = B[k,j] * x[k]
+            s1 += bkjx
+            s2 += abs(bkjx)
+        end
+        s1, s2
+    end
+    resvec = []
+    for j = 1:n
+        s1, s2 = xtb(j)
+        if abs(s1) <= s2 * criteria.rtol || abs(s1) <= criteria.atol
+            push!(resvec, (code=1, col=j, xb=s1, xc=s2))
+        end
+    end
+    if length(resvec) == 1
+        r = resvec[1]
+        return (code=r.code, result=B[:,r.col], col=r.col, xb=r.xb, xc=r.xc, B=B, H=H)
+    end
+    (code=0, B=B, H=H)
+end
+
+function make_criteria(criteria, x)
+    return (rtol=eps(eltype(x)), atol=eltype(x)(0), itermax=10000)
+end
+"""
+    H, B = pslq_step(H, B)
+
+Perform one step of the PSLQ agorithm. Before the first step H should be initialized
+by calling `make_H(x)` from and array `x` of reals and `B` should be identity matrix.
+The step returns modified `H` and `B` accordingly. 
+"""
 function pslq_step(H::Matrix{T}, B::Matrix{Ti}) where {T<:Real,Ti<:Integer}
     pslq_step!(copy(H), copy(B), UnitLowerTriangular(similar(B)))
 end
