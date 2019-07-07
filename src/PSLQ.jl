@@ -66,6 +66,7 @@ function pslq_step!(H::Matrix{T}, A::Matrix{Ti}, B::Matrix{Ti},
                     D::UnitLowerTriangular{Ti,Matrix{Ti}}) where {T<:Real,Ti<:Integer}
     n = check_H(H)
     check_square(D, n)
+    check_square(A, n)
     check_square(B, n)
     make_D!(D, H, nint)
     lmul!(D, H)

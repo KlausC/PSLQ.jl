@@ -1,4 +1,4 @@
-import PSLQ: make_H, make_D, pslq_step, check_H, findmaxj, lqrefresh
+import PSLQ: make_H, make_D, pslq_step, check_H, findmaxj, lqrefresh, integertype
 
 function example_1(a, n::Integer)
     x = Vector{eltype(a)}(undef, n)
@@ -30,35 +30,14 @@ function make_Htest(n::Integer; gamma=1, T=Float64)
     H
 end
 
-function make_G(H, j)
-    n = size(H, 1)
-    G = zeros(eltype(H), n-1, n-1)
-    for i = 1:n-1; G[i,i] = eltype(H)(1); end
-    if j != n-1
-        b, c = H[j+1,j], H[j+1,j+1]
-        d = hypot(b, c)
-        b, c = b/d, c/d
-        G[j,j] = G[j+1,j+1] = b
-        G[j,j+1] = -c
-        G[j+1,j] = c
-    end
-    G
-end
-
-function make_R(H, j)
-    n = size(H, 1)
-    R = zeros(Int, n, n)
-    for i = 1:n; R[i,i] = 1; end
-    R[j,j] = R[j+1,j+1] = 0
-    R[j,j+1] = R[j+1,j] = 1
-    R
-end
-
-
 @testset "correctness of calculations" begin
    
     H = make_Htest(1)
     @test_throws DimensionMismatch check_H(H)
+
+    @test integertype(Float32) == Int
+    @test integertype(Float64) == Int
+    @test integertype(BigFloat) == BigInt
 
     H = make_Htest(10, gamma=2.0)
     @test findmaxj(H, 2.0) == 9
@@ -78,6 +57,9 @@ end
    
     D = make_D(H)
     @test D \ D == I
+
+    @test_throws DimensionMismatch pslq_step(zeros(4,2), zeros(Int,4,4), zeros(Int,4,4))
+    @test_throws DimensionMismatch pslq_step(zeros(4,3), zeros(Int,4,3), zeros(Int,4,3))
 
     A1 = Matrix(I*1, size(H, 1), size(H,1))
     B1 = copy(A1)
