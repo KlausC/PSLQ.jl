@@ -56,10 +56,11 @@ end
     @test norm(H * H' - P) <= 2*eps()*sqrt(size(H,2))
    
     D = make_D(H)
-    @test D \ D == I
+    @test diag(D) == ones(eltype(D), size(D,2))
+    @test istril(D)
 
-    @test_throws DimensionMismatch pslq_step(zeros(4,2), zeros(Int,4,4), zeros(Int,4,4))
     @test_throws DimensionMismatch pslq_step(zeros(4,3), zeros(Int,4,3), zeros(Int,4,3))
+    @test_throws DimensionMismatch pslq_step(zeros(4,2), zeros(Int,4,4), zeros(Int,4,4))
 
     A1 = Matrix(I*1, size(H, 1), size(H,1))
     B1 = copy(A1)
