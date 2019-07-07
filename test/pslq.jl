@@ -1,3 +1,4 @@
+import PSLQ: make_H, make_D, pslq_step, check_H, findmaxj, lqrefresh
 
 function example_1(a, n::Integer)
     x = Vector{eltype(a)}(undef, n)
@@ -54,9 +55,6 @@ function make_R(H, j)
 end
 
 
-
-import PSLQ: make_H, make_D, pslq_step, check_H, check_square, findmaxj
-
 @testset "correctness of calculations" begin
    
     H = make_Htest(1)
@@ -93,13 +91,18 @@ import PSLQ: make_H, make_D, pslq_step, check_H, check_square, findmaxj
     @test norm(X'X - I) <= 10*eps()*size(H,2)
 end
 
-@testset "iteration algorithms" begin
-    
-    x = example_2(2.0^(1/7), 8)
+@testset "iteration algorithm with type $T" for T in (Float64,BigFloat)
+
+    x = example_2(T(2.0)^(T(1)/7), 8)
     r = pslq(x)
     @test r.code == 1
     @test r.iter >= 30
     @test r.col == 1
     @test norm((r.B'x)[r.col]) <= 10*eps(norm(x))
+
+    H = r.H
+    H0 = make_H(x)
+    H2 = lqrefresh(r.A, H0)
+    @test norm(H2 - H) <= 1e8 * eps(norm(x))
 end
 

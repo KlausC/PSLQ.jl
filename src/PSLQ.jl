@@ -217,7 +217,7 @@ function lqrefresh(A::Matrix, H::Matrix)
     L = lq!(A * H).L # lq! not availbale for BigFloat
     refresh!(L)
 end
-function lqrefresh(A::Matrix{BigFloat}, H::Matrix)
+function lqrefresh(A::Matrix, H::Matrix{BigFloat})
     L = Matrix(qr!(H'*A').R')
     refresh!(L)
 end
