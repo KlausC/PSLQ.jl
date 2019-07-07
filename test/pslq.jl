@@ -7,7 +7,16 @@ function example_1(a, n::Integer)
         b *= a
     end
     x[n] = sum(x[1:n-1] .* (1:n-1))
-    x ./= norm(x)
+    x
+end
+
+function example_2(a, n::Integer)
+    x = Vector{eltype(a)}(undef, n)
+    b = oftype(a, 1)
+    for i = 1:n
+        x[i] = b
+        b *= a
+    end
     x
 end
 
@@ -19,6 +28,32 @@ function make_Htest(n::Integer; gamma=1, T=Float64)
     end
     H
 end
+
+function make_G(H, j)
+    n = size(H, 1)
+    G = zeros(eltype(H), n-1, n-1)
+    for i = 1:n-1; G[i,i] = eltype(H)(1); end
+    if j != n-1
+        b, c = H[j+1,j], H[j+1,j+1]
+        d = hypot(b, c)
+        b, c = b/d, c/d
+        G[j,j] = G[j+1,j+1] = b
+        G[j,j+1] = -c
+        G[j+1,j] = c
+    end
+    G
+end
+
+function make_R(H, j)
+    n = size(H, 1)
+    R = zeros(Int, n, n)
+    for i = 1:n; R[i,i] = 1; end
+    R[j,j] = R[j+1,j+1] = 0
+    R[j,j+1] = R[j+1,j] = 1
+    R
+end
+
+
 
 import PSLQ: make_H, make_D, pslq_step, check_H, check_square, findmaxj
 
@@ -40,19 +75,31 @@ import PSLQ: make_H, make_D, pslq_step, check_H, check_square, findmaxj
 
     x = example_1(float(ℯ), 6)
     H = make_H(x)
-    P = I - x * x'
+    P = I - x * x' / norm(x)^2
     @test norm(H * H' - P) <= 2*eps()*sqrt(size(H,2))
    
     D = make_D(H)
     @test D \ D == I
 
-    B1 = Matrix(I*1, size(H, 1), size(H,1))
+    A1 = Matrix(I*1, size(H, 1), size(H,1))
+    B1 = copy(A1)
     H1 = H
-    H1, B1 = pslq_step(H1, B1)
-    H1, B1 = pslq_step(H1, B1)
-    H1, B1 = pslq_step(H1, B1)
-    H1, B1 = pslq_step(H1, B1)
-    X = H \ (B1 * H1) # verify that H = B1*H1 * X with orthogonal X
+    H1, A1, B1 = pslq_step(H1, A1, B1)
+    H1, A1, B1 = pslq_step(H1, A1, B1)
+    H1, A1, B1 = pslq_step(H1, A1, B1)
+    H1, A1, B1 = pslq_step(H1, A1, B1)
+    @test A1 * B1 == I
+    X = H \ (B1 * H1) # verify that H = B1*H1 * X with orthonormal X
     @test norm(X'X - I) <= 10*eps()*size(H,2)
+end
+
+@testset "iteration algorithms" begin
+    
+    x = example_2(2.0^(1/7), 8)
+    r = pslq(x)
+    @test r.code == 1
+    @test r.iter >= 30
+    @test r.col == 1
+    @test norm((r.B'x)[r.col]) <= 10*eps(norm(x))
 end
 

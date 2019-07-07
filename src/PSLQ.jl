@@ -8,20 +8,22 @@ function pslq(x::Vector{T}; criteria=nothing) where T<:Real
     n = length(x)
     H = make_H(x)
     criteria = make_criteria(criteria, x)
-    B = Matrix(I*integertype(T)(1), n, n)
+    A = Matrix(I*integertype(T)(1), n, n)
+    B = copy(A)
     D = UnitLowerTriangular(similar(B)) # working area
     iter = 0
     result = (code=0, result=similar(B, n, 0))
     while iter < criteria.itermax && result.code == 0
-        pslq_step!(H, B, D)
         iter += 1    
-        result = convergence(x, H, B, criteria)
+        pslq_step!(H, A, B, D)
+        result = convergence(x, H, A, B, iter, criteria)
     end
     result
 end
 
 
-function convergence(x::Vector{T}, H::AbstractMatrix, B::Matrix, criteria::NamedTuple) where T
+function convergence(x::Vector{T}, H::AbstractMatrix, A::Matrix, B::Matrix,
+                     iter::Integer, criteria::NamedTuple) where T
     n = size(x, 1)
     function xtb(j)
         s1 = s2 = T(0)
@@ -35,31 +37,32 @@ function convergence(x::Vector{T}, H::AbstractMatrix, B::Matrix, criteria::Named
     resvec = []
     for j = 1:n
         s1, s2 = xtb(j)
-        if abs(s1) <= s2 * criteria.rtol || abs(s1) <= criteria.atol
+        if abs(s1) <= s2 * criteria.rtol + criteria.atol
             push!(resvec, (code=1, col=j, xb=s1, xc=s2))
         end
     end
-    if length(resvec) == 1
+    if length(resvec) >= 1
         r = resvec[1]
-        return (code=r.code, result=B[:,r.col], col=r.col, xb=r.xb, xc=r.xc, B=B, H=H)
+        return (code=r.code, iter=iter, col=r.col, xb=r.xb, xc=r.xc, A=A, B=B, H=H)
     end
-    (code=0, B=B, H=H)
+    (code=0, iter=iter, A=A, B=B, H=H)
 end
 
 function make_criteria(criteria, x)
-    return (rtol=eps(eltype(x)), atol=eltype(x)(0), itermax=10000)
+    return (rtol=10*eps(eltype(x)), atol=10*eps(norm(x)), itermax=10000)
 end
 """
-    H, B = pslq_step(H, B)
+    H1, A1, B1 = pslq_step(H, A, B)
 
 Perform one step of the PSLQ agorithm. Before the first step H should be initialized
-by calling `make_H(x)` from and array `x` of reals and `B` should be identity matrix.
-The step returns modified `H` and `B` accordingly. 
+by calling `make_H(x)` from and array `x` of reals and `A`, `B` should be identity matriices.
+The step returns modified `H` and `B` accordingly. The follow identities are maintained:
+`A1 * B1 == A * B` and `B1 * H1 == B * H * G` where `G` is orthonormal.
 """
-function pslq_step(H::Matrix{T}, B::Matrix{Ti}) where {T<:Real,Ti<:Integer}
-    pslq_step!(copy(H), copy(B), UnitLowerTriangular(similar(B)))
+function pslq_step(H::Matrix{T}, A::Matrix{Ti}, B::Matrix{Ti}) where {T<:Real,Ti<:Integer}
+    pslq_step!(copy(H), copy(A), copy(B), UnitLowerTriangular(similar(B)))
 end
-function pslq_step!(H::Matrix{T}, B::Matrix{Ti},
+function pslq_step!(H::Matrix{T}, A::Matrix{Ti}, B::Matrix{Ti},
                     D::UnitLowerTriangular{Ti,Matrix{Ti}}) where {T<:Real,Ti<:Integer}
     n = check_H(H)
     check_square(D, n)
@@ -70,9 +73,11 @@ function pslq_step!(H::Matrix{T}, B::Matrix{Ti},
     j = findmaxj(H, γ)
     exrows!(H, j, j+1, 1:j)
     givenscol!(H, j)
-    rdiv!(B, D) 
+    rdiv!(B, D)
     excols!(B, j, j+1, 1:n)
-    H, B
+    lmul!(D, A)
+    exrows!(A, j, j+1, 1:n)
+    H, A, B
 end
 
 function findmaxj(H::Matrix, γ::Real)
@@ -147,7 +152,9 @@ function make_H(x::Vector{T}) where T<:Real
 end
 
 function givenscol!(H::Matrix{T}, j::Integer) where T<:Real
-    j >= size(H, 2) && return H
+    if j == size(H, 2)
+        return refresh!(H, j)
+    end
     n = size(H, 1)
     a, b, c = H[j,j], H[j+1,j+1], H[j+1,j]
     d = hypot(a, b)
@@ -159,7 +166,7 @@ function givenscol!(H::Matrix{T}, j::Integer) where T<:Real
         u, v = H[k,j], H[k,j+1]
         H[k,j], H[k,j+1] = u*a + v*b, -u*b + v*a
     end
-    H
+    refresh!(H, j+1)
 end
 
 function exrows!(H::Matrix, i1::Integer, i2::Integer, r::UnitRange)
@@ -176,30 +183,43 @@ function excols!(H::Matrix, i1::Integer, i2::Integer, r::UnitRange)
     H
 end
 
-function make_G(H, j)
-    n = size(H, 1)
-    G = zeros(eltype(H), n-1, n-1)
-    for i = 1:n-1; G[i,i] = eltype(H)(1); end
-    if j != n-1
-        b, c = H[j+1,j], H[j+1,j+1]
-        d = hypot(b, c)
-        b, c = b/d, c/d
-        G[j,j] = G[j+1,j+1] = b
-        G[j,j+1] = -c
-        G[j+1,j] = c
+"""
+    refresh!(H, j)
+divide column `j` by `H[j,j]/abs(H[j,j])` in order to make `H[j,j]` real and positive. 
+`H` is assumed to be lower trapezoidal.
+"""
+function refresh!(H::Matrix, col::Integer)
+    m, n = size(H)
+    h = H[col, col]
+    if 0 < col <= m && !(isreal(h) && real(h) >= 0)
+        h /= abs(h)
+        @inbounds for k = col:m
+            H[k,col] /= h
+        end
     end
-    G
+    H
 end
 
-function make_R(H, j)
-    n = size(H, 1)
-    R = zeros(Int, n, n)
-    for i = 1:n; R[i,i] = 1; end
-    R[j,j] = R[j+1,j+1] = 0
-    R[j,j+1] = R[j+1,j] = 1
-    R
+function refresh!(H::Matrix)
+    n = size(H, 2)
+    @inbounds for i = 1:n
+        refresh!(H, i)
+    end
+    H
 end
 
+"""
+    lqrefresh(A, H)
 
+calculate LQ-factorization of `A * H`and return refreshed `L`.
+"""
+function lqrefresh(A::Matrix, H::Matrix)
+    L = lq!(A * H).L # lq! not availbale for BigFloat
+    refresh!(L)
+end
+function lqrefresh(A::Matrix{BigFloat}, H::Matrix)
+    L = Matrix(qr!(H'*A').R')
+    refresh!(L)
+end
 
 end # module
