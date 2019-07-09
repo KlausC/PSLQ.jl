@@ -1,4 +1,4 @@
 using PSLQ, LinearAlgebra
 using Test
 
-include("pslq.jl")
+@testset "PSLQ" begin include("pslq.jl") end
