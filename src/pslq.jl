@@ -15,8 +15,7 @@ function pslq_step!(H::Matrix{T}, A::Matrix{Ti}, B::Matrix{Ti},
     check_square(D, n)
     check_square(A, n)
     check_square(B, n)
-    make_D!(D, H, nint)
-    lmul!(D, H)
+    make_DH!(D, H, nint)
     γ = 2.0
     j = findmaxj(H, γ)
     exrows!(H, j, j+1, 1:j)
@@ -61,24 +60,31 @@ end
 nint(x) = Integer(round(x))
 integertype(::Type{T}) where T = typeof(Integer(T(0)))
 integertype(::Type{BigFloat}) = BigInt
-function make_D(H::Matrix{T}, nint::Function=nint) where {T<:Real}
+
+# calculate D and D*H in one loop (modified Hermite reduction)
+function make_DH(H::Matrix{T}, nint::Function=nint) where {T<:Real}
     n = size(H, 1)
     D = Matrix{integertype(T)}(undef, n, n)
-    make_D!(UnitLowerTriangular(D), H, nint)
+    make_DH!(UnitLowerTriangular(D), copy(H), nint)
 end
-function make_D!(DU::UnitLowerTriangular, H::Matrix, nint::Function)
+function make_DH!(DU::UnitLowerTriangular, H::Matrix, nint::Function)
     n = check_H(H)
     D = DU.data
     for i = 2:n
+        for j = 1:i-1
+            D[i,j] = 0
+        end
         for j = i-1:-1:1
-            sum = H[i,j]
-            for k = j+1:i-1
-                sum += D[i,k] * H[k,j]
+            q = nint(H[i,j] / H[j,j])
+            D[i,j] -= q
+            H[i,j] -= q * H[j,j]
+            for k = 1:j-1
+                D[i,k] -= q * D[j,k]
+                H[i,k] -= q * H[j,k]
             end
-            D[i,j] = nint(-sum / H[j,j])
         end
     end
-    DU
+    DU, H
 end
 
 function make_H(x::Vector{T}) where T<:Real

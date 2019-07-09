@@ -1,4 +1,4 @@
-import PSLQ: make_H, make_D, pslq_step, check_H, check_square, findmaxj, lqrefresh, integertype
+import PSLQ: make_H, make_DH, pslq_step, check_H, check_square, findmaxj, lqrefresh, integertype
 
 function example_1(a, n::Integer)
     x = Vector{eltype(a)}(undef, n)
@@ -48,7 +48,7 @@ end
     @test findmaxj(H, 2.0) == 7
 
     H = make_Htest(10, T=T)
-    D = make_D(H)
+    D, DH = make_DH(H)
     @test norm(D * H - Matrix(I, size(H))) == 0
 
     x = example_1(T(ℯ), 6)
@@ -59,7 +59,7 @@ end
     @test norm(H'H - I) <= 2eps(Hn)
     @test norm(H * H' - P) <= 2eps(Hn)
    
-    D = make_D(H)
+    D, DH = make_DH(H)
     @test diag(D) == ones(eltype(D), size(D,2))
     @test istril(D)
 
