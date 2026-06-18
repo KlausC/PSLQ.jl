@@ -21,7 +21,9 @@ The returned result is a named tuple and may contain different result variants:
 
 The input criteria are transformed to object `cr` by method `make_criteria(criteria, x)`.
 """
-function pslq(x::Vector{T}; criteria=nothing) where T<:Real
+function pslq(x::Vector{T}; criteria...) where T<:AbstractFloat
+    nz = findall(!iszero, x)
+    x = x[nz]
     n = length(x)
     H = make_H(x)
     criteria = make_criteria(criteria, x)
@@ -31,11 +33,37 @@ function pslq(x::Vector{T}; criteria=nothing) where T<:Real
     iter = 0
     result = (code=0, result=similar(B, n, 0))
     while iter < criteria.itermax && result.code == 0
-        iter += 1    
+        iter += 1
         pslq_step!(H, A, B, D)
         result = convergence(x, H, A, B, iter, criteria)
     end
     result
+end
+
+function pslq(x::Vector{C}; criteria...) where {T,C<:Complex{T}}
+    nz = findall(!iszero, x)
+    x = x[nz]
+    criteria = make_criteria(criteria, x[1])
+    xr = real(x)
+    xi = imag(x)
+    yr = similar(xr)
+    i = 0
+    while i <= 20
+        a = rand(T)
+        yr .= xr .+ xi * a
+        res = pslq(yr)
+        if res.code == 1
+            r = res.B[:,res.col]
+            xd = abs(r'xi)
+            xe = sqrt(r'r)
+            if check_criteria(xd, xe, criteria)
+                return res
+            end
+        end
+        println("rand = $a, i = $i")
+        i += 1
+    end
+    return (code=2, iter=i)
 end
 
 """
@@ -49,7 +77,8 @@ function convergence(x::Vector{T}, H::AbstractMatrix, A::Matrix, B::Matrix,
                      iter::Integer, criteria::NamedTuple) where T
     n = size(x, 1)
     function xtb(j)
-        s1 = s2 = T(0)
+        s1 = T(0)
+        s2 = real(T)(0)
         for k = 1:n
             bkjx = B[k,j] * x[k]
             s1 += bkjx
@@ -60,7 +89,7 @@ function convergence(x::Vector{T}, H::AbstractMatrix, A::Matrix, B::Matrix,
     resvec = []
     for j = 1:n
         s1, s2 = xtb(j)
-        if abs(s1) <= s2 * criteria.rtol + criteria.atol
+        if check_criteria(s1, s2, criteria)
             push!(resvec, (code=1, col=j, xb=s1, xc=s2))
         end
     end
@@ -71,7 +100,8 @@ function convergence(x::Vector{T}, H::AbstractMatrix, A::Matrix, B::Matrix,
     (code=0, iter=iter, A=A, B=B, H=H)
 end
 
-function make_criteria(criteria, x)
-    return (rtol=10*eps(eltype(x)), atol=10*eps(norm(x)), itermax=10000)
-end
+check_criteria(x, y, criteria) = abs(x) <= y * criteria.rtol + criteria.atol
 
+function make_criteria(criteria, x)
+    return (rtol=10*eps(real(eltype(x))), atol=10*eps(norm(x)), itermax=10000)
+end

@@ -6,16 +6,16 @@ by calling `make_H(x)` from and array `x` of reals and `A`, `B` should be identi
 The step returns modified `H` and `B` accordingly. The follow identities are maintained:
 `A1 * B1 == A * B` and `B1 * H1 == B * H * G` where `G` is orthonormal.
 """
-function pslq_step(H::Matrix{T}, A::Matrix{Ti}, B::Matrix{Ti}) where {T<:Real,Ti<:Integer}
+function pslq_step(H::Matrix{T}, A::Matrix{Ti}, B::Matrix{Ti}) where {T<:Real,Ti}
     pslq_step!(copy(H), copy(A), copy(B), UnitLowerTriangular(similar(B)))
 end
 function pslq_step!(H::Matrix{T}, A::Matrix{Ti}, B::Matrix{Ti},
-                    D::UnitLowerTriangular{Ti,Matrix{Ti}}) where {T<:Real,Ti<:Integer}
+                    D::UnitLowerTriangular{Ti,Matrix{Ti}}) where {T<:Number,Ti}
     n = check_H(H)
     check_square(D, n)
     check_square(A, n)
     check_square(B, n)
-    make_DH!(D, H, nint)
+    make_DH!(D, H)
     γ = 2.0
     j = findmaxj(H, γ)
     exrows!(H, j, j+1, 1:j)
@@ -26,6 +26,11 @@ function pslq_step!(H::Matrix{T}, A::Matrix{Ti}, B::Matrix{Ti},
     exrows!(A, j, j+1, 1:n)
     H, A, B
 end
+
+pslq_rho2(::Type{<:Real}) = 4.0
+pslq_rho2(::Type{<:Complex}) = 2.0
+pslq_rho2(::Type) = 1.0
+pslq_gamma(τ::Real, ρ::Real, T::Type) = sqrt(1/tau^2 - 1/pslq_rho2(T))
 
 function findmaxj(H::Matrix, γ::Real)
     # δ = sqrt(3/4 - 1/γ^2) must be > 0
@@ -57,17 +62,19 @@ function check_square(B::AbstractMatrix, n::Integer)
     end
     n
 end
-nint(x) = Integer(round(x))
-integertype(::Type{T}) where T = typeof(Integer(T(0)))
+nint(x::Real) = Integer(round(x))
+nint(x::T) where T<:Complex = integertype(T)(round(x))
+integertype(::Type{T}) where T<:Real = typeof(Integer(real(T)(0)))
+integertype(::Type{T}) where T<:Complex = Complex{integertype(real(T))}
 integertype(::Type{BigFloat}) = BigInt
 
 # calculate D and D*H in one loop (modified Hermite reduction)
-function make_DH(H::Matrix{T}, nint::Function=nint) where {T<:Real}
+function make_DH(H::Matrix{T}) where {T<:Number}
     n = size(H, 1)
     D = Matrix{integertype(T)}(undef, n, n)
-    make_DH!(UnitLowerTriangular(D), copy(H), nint)
+    make_DH!(UnitLowerTriangular(D), copy(H))
 end
-function make_DH!(DU::UnitLowerTriangular, H::Matrix, nint::Function)
+function make_DH!(DU::UnitLowerTriangular, H::Matrix)
     n = check_H(H)
     D = DU.data
     for i = 2:n
@@ -87,17 +94,17 @@ function make_DH!(DU::UnitLowerTriangular, H::Matrix, nint::Function)
     DU, H
 end
 
-function make_H(x::Vector{T}) where T<:Real
+function make_H(x::Vector{T}) where T<:Number
     n = length(x)
     H = zeros(T, n, n-1)
     b = abs(x[n])
     a = b^2
     for j = n-1:-1:1
-        a += x[j]^2
+        a += abs2(x[j])
         c = b
         b = sqrt(a)
         H[j,j] = c / b
-        d = -x[j] / (c * b)
+        d = -conj(x[j]) / (c * b)
         for i = j+1:n
             H[i,j] = x[i] * d
         end
@@ -105,7 +112,7 @@ function make_H(x::Vector{T}) where T<:Real
     H
 end
 
-function givenscol!(H::Matrix{T}, j::Integer) where T<:Real
+function givenscol!(H::Matrix{T}, j::Integer) where T<:Number
     if j == size(H, 2)
         return refresh!(H, j)
     end
@@ -115,10 +122,10 @@ function givenscol!(H::Matrix{T}, j::Integer) where T<:Real
     a /= d
     b /= d
     H[j,j] = d
-    H[j+1,j], H[j+1,j+1] = c * a, -c * b
+    H[j+1,j], H[j+1,j+1] = c * conj(a), -c * b
     for k = j+2:n
         u, v = H[k,j], H[k,j+1]
-        H[k,j], H[k,j+1] = u*a + v*b, -u*b + v*a
+        H[k,j], H[k,j+1] = u * conj(a) + v * conj(b), -u * b + v * a
     end
     refresh!(H, j+1)
 end
@@ -139,7 +146,7 @@ end
 
 """
     refresh!(H, j)
-divide column `j` by `H[j,j]/abs(H[j,j])` in order to make `H[j,j]` real and positive. 
+divide column `j` by `H[j,j]/abs(H[j,j])` in order to make `H[j,j]` real and positive.
 `H` is assumed to be lower trapezoidal.
 """
 function refresh!(H::Matrix, col::Integer)
@@ -175,4 +182,3 @@ function lqrefresh(A::Matrix, H::Matrix{BigFloat})
     L = Matrix(qr!(H'*A').R')
     refresh!(L)
 end
-
