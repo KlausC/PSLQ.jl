@@ -12,20 +12,20 @@ Perform SIRD iterations for the Matrix X until termination criteria are fulfille
 `result` always contains the fields: `code`, `iter`, `A`, `B`, `H`.
 The returned result is a named tuple and may contain different result variants:
 
-`result.code == 1`:
+`result.code == SUCCESS (1)`:
      A solution `m` was found `|m' * X| <= cr.atol + cr.rtol*|X|`
     with `m = result.B[:,result.col]`
 
-`result.code == 2`:
+`result.code == INEXACT (2)`:
     Inaccuracy in calculation - retry using higher precision
 
-`result.code == 3`:
+`result.code == LIMITED (3)`:
     No solution `m` possible with `|m| <= cr.elimit`
 
-`result.code == 4`:
+`result.code == ITMAX (4)`:
     No decision after number of iterations exceeds `cr.itermax`
 
-`result.code == 0`:
+`result.code == CONTINUE (0)`:
     Iteration ongoing
 
 The result has teh following fields:
@@ -42,22 +42,23 @@ The result has teh following fields:
 
 The input criteria are transformed to object `cr` by method `make_criteria(criteria, x)`.
 """
-function sird(X::AbstractVecOrMat{T}; γ::Real=2.0, criteria...) where T<:Real
+function sird(X::AbstractVecOrMat{T}; criteria...) where T<:Real
     n, t = size(X, 1), size(X, 2)
     nt = n - t
     n > 0 && t > 0 && nt > 0 || throw(ArgumentError("no appropriate size of X: $(size(X))"))
+    criteria = make_criteria(criteria, X)
+    γ = criteria.γ
     3γ^2 > 4 || throw(ArgumentError("γ must be > 2/√3"))
 
-    criteria = make_criteria(criteria, X)
     H = make_H(X)
     B = Matrix{integertype(T)}(I, n, n)
     D = UnitLowerTriangular(similar(B)) # working area
     err = ErrorEstimation(H)
     while true
-        err.iter += 1
+        increase_iter(err)
         sird_step!(γ, H, B, D, err)
         result = convergence(X, H, B, err, criteria)
-        result.code != 0 && return result
+        result.code != CONTINUE && return result
     end
 end
 
@@ -82,15 +83,15 @@ Convergence criteria - see `convergence`.
 """
 function convergence_criteria(err::ErrorEstimation, criteria)
     if false
-        1
+        SUCCESS
     elseif condition_small_diag(err, criteria)
-        2
+        INEXACT
     elseif condition_normlimit(err, criteria)
-        3
+        LIMITED
     elseif err.iter > criteria.itermax
-        4
+        ITMAX
     else
-        0
+        CONTINUE
     end
 end
 
@@ -120,9 +121,9 @@ function convergence(X::AbstractVecOrMat{T}, H::AbstractMatrix, B::AbstractMatri
     err::ErrorEstimation, criteria::NamedTuple) where T
 
     col = check_evaluation(X, B, criteria)
-    code = col > 0 ? 1 : convergence_criteria(err, criteria)
+    code = col > 0 ? SUCCESS : convergence_criteria(err, criteria)
 
-    (;code, col, err, X, B, H)
+    SirdResult(code, col, err, criteria, B, X)
 end
 
 function check_evaluation(X::AbstractVecOrMat{T}, B::AbstractMatrix, criteria) where T
@@ -158,8 +159,14 @@ function check_evaluation(X::AbstractVecOrMat{T}, B::AbstractMatrix, criteria) w
     return 0
 end
 
-function make_criteria(criteria, x)
-    return (rtol=10*eps(float(eltype(x))), atol=10*eps(norm(x)), itermax=10000, elimit=1e10, γ=2.0)
+make_criteria(criteria::Base.Pairs, x) = make_criteria(values(criteria), x)
+function make_criteria(arguments::NamedTuple, x)
+    rtol = get(arguments, :rtol) do; 10*eps(float(eltype(x))) end
+    atol = get(arguments, :atol) do; 10*eps(norm(x)) end
+    itermax = get(arguments, :itermax, 10000)
+    elimit = get(arguments, :elimit, 1e20)
+    γ = get(arguments, :γ, 2.0)
+    return (;rtol, atol, itermax, elimit, γ)
 end
 
 function condition_relabs(x, y, criteria)
@@ -170,7 +177,7 @@ function condition_small_diag(err, criteria)
     H = err.H
     E = err.E
     nt = size(H, 2)
-    condition_relabs(H[nt, nt], E[nt, nt], criteria)
+    condition_relabs(H[nt, nt], ldexp(E[nt, nt], err.iter), criteria)
 end
 
 function condition_normlimit(err, criteria)

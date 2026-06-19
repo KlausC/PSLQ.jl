@@ -24,7 +24,7 @@ function sird_step!(γ::Real, H::Matrix{T}, B::Matrix{Ti}, D::AbstractMatrix{Ti}
 end
 
 """
-    findmax(H, γ)
+    findmaxj(H, γ)
 
 On the diagonal of H find a maximal H[i] * γ^i
 
@@ -33,14 +33,16 @@ findmax(abs.(diag(H) .* γ .^ (1:n-1)))[2]
 function findmaxj(H::Matrix, γ::Real)
     # sqrt(3/4 - 1/γ^2) must be > 0; γ > 2 / √3
     # j = findmax(abs.(diag(H) .* γ .^ (1:n-1)))[2]
-    n = min(size(H)...)
-    msf = abs(H[n, n]) * γ
+    n = size(H, 2)
+    hnn = abs2(H[n, n])
+    msf = hnn * γ^2
     for k = (n-1):-1:1
-        hkk = abs(H[k, k])
-        if hkk >= msf
+        hkk = abs2(H[k, k])
+        if hkk >= msf && hkk > hnn + abs2(H[k+1, k])
             n, msf = k, hkk
         end
         msf *= γ
+        hnn = hkk
     end
     n
 end
@@ -60,11 +62,19 @@ function check_square(B::AbstractMatrix, n::Integer)
     end
     n
 end
-nint(x::T, y::T) where T<:Real = iszero(y) ? y : integertype(T)(round(x / y))
+
+function nint(x::T, y::T) where T<:Real
+    IT = integertype(T)
+    if abs(x)*2 <= abs(y)
+        zero(IT)
+    else
+        iszero(y) ? y : IT(round(x / y))
+    end
+end
 
 integertype(::Type{T}) where T<:Real = typeof(Integer(zero(T)))
 
-# calculate D and D*H in one loop (modified Hermite reduction)
+# calculate D and D*H in one loop (modified Hermite reduction), also B /= D
 function make_DH!(DU::UnitLowerTriangular, H::AbstractMatrix, B::AbstractMatrix, err::ErrorEstimation)
     n, t = check_H(H)
     nt = n - t
@@ -75,10 +85,12 @@ function make_DH!(DU::UnitLowerTriangular, H::AbstractMatrix, B::AbstractMatrix,
         end
         for j = min(i-1, nt):-1:1
             q = nint(H[i, j], H[j, j]) # round to next integer
-            for k = 1:j
-                DU[i, k] -= q * DU[j, k]
-                H[i, k] -= q * H[j, k]
-                E[i, k] += abs(q) * E[j, k]
+            if !iszero(q)
+                for k = 1:j
+                    DU[i, k] -= q * DU[j, k]
+                    H[i, k] -= q * H[j, k]
+                    E[i, k] += abs(q) * E[j, k]
+                end
             end
         end
     end
