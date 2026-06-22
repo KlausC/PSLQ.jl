@@ -47,10 +47,15 @@ function sird(X::AbstractVecOrMat{T}, ::Type{IT}=integertype(T); criteria...) wh
     nt = n - t
     n > 0 && t > 0 && nt > 0 || throw(ArgumentError("no appropriate size of X: $(size(X))"))
     criteria = make_criteria(criteria, X, IT)
-
     H = make_H(X)
     B = Matrix{integertype(T)}(I, n, n)
     D = UnitLowerTriangular(similar(B)) # working area
+    _sird!(X, H, B, D; criteria)
+end
+
+function _sird!(X::AbstractVecOrMat{T}, H, B, D::AbstractMatrix{IT}; criteria) where {T<:Number,IT}
+    n, t = size(X, 1), size(X, 2)
+    nt = n - t
     err = ErrorEstimation(H)
     make_DH!(D, H, B, err, 1) # H .= D * H, B = B / D
     while true
@@ -61,18 +66,18 @@ function sird(X::AbstractVecOrMat{T}, ::Type{IT}=integertype(T); criteria...) wh
     end
 end
 
-function sird(X::AbstractVecOrMat{T}; γ::Real=2.0, criteria...) where T<:Complex{<:Real}
+function sird(X::AbstractVecOrMat{T}, ::Type{<:Real}; criteria...) where T<:Complex{<:Real}
     n, t = size(X,1), size(X,2)
     XX = Matrix{real(T)}(undef, n, 2*t)
     for i in axes(X, 2)
         XX[:,i*2-1] .= real(X[:,i])
         XX[:,i*2] .= imag(X[:,i])
     end
-    sird(XX; γ, criteria...)
+    sird(XX; criteria...)
 end
 
 function pslq(X::AbstractVector{T}; criteria...) where T<:Union{Real,Complex}
-    sird(X; criteria...)
+    sird(X, integertype(T); criteria...)
 end
 
 """
