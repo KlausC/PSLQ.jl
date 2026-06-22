@@ -10,7 +10,7 @@ mutable struct ErrorEstimation{MH<:AbstractMatrix,ME<:AbstractMatrix}
     H::MH
     E::ME
     function ErrorEstimation(H::MH) where MH<:AbstractMatrix
-        E = (abs ∘ Float64).(H)
+        E = (Float64 ∘ abs).(H)
         ME = typeof(E)
         new{MH,ME}(0, H, E)
     end
@@ -25,6 +25,29 @@ function increase_iter(err::ErrorEstimation)
     err.iter += 1
     err.E ./= 2.0
     nothing
+end
+
+function clean_H!(err::ErrorEstimation, i::Integer, k::Integer)
+    H = err.H
+    hik = H[i, k]
+    iszero(hik) && return hik
+    eik = ldexp(err.E[i, k], err.iter)*eps(typeof(real(hik)))
+    hikold = hik
+    if abs(hik) <= eik
+        H[i, k] = hik = zero(hik)
+    elseif eltype(H) <: Complex
+        hr, hi = reim(hik)
+        if abs(hr) <= eik
+            H[i,k] = hik = Complex(zero(hr), hi)
+        elseif abs(hi) <= eik
+            H[i,k] = hik = Complex(hr)
+        end
+    end
+    if hik != hikold
+    print("clean_H($i,$k) h=$(ComplexF64(hikold)), e=$eik")
+    println(", => $(ComplexF64(hik))")
+    end
+    hik
 end
 
 function Base.show(io::IO, err::ErrorEstimation)
@@ -57,9 +80,9 @@ function Base.getproperty(sr::S, s::Symbol) where {TE,S<:SirdResult{TE}}
     elseif s in fieldnames(typeof(cr))
         getproperty(cr, s)
     elseif s === :solution
-        sr.code == SUCCESS ? sr.B[:, sr.col] : vec(sr.B[1:0])
+        solution_column(sr)
     elseif s === :limit
-        Float64(floor(1/maximum(abs, diag(err.H))))
+        Float64(1/maximum(abs, diag(err.H)))
     else
         getfield(sr, s)
     end

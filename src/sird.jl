@@ -13,13 +13,21 @@ function sird_step!(γ::Real, H::Matrix{T}, B::Matrix{Ti}, D::AbstractMatrix{Ti}
     E = err.E
     check_square(D, n)
     check_square(B, n)
-    make_DH!(D, H, B, err) # H .= D * H, B = B / D
     j = findmaxj(H, γ)
-    k = j < nt ? j+1 : findmax(abs, view(H, (nt+1):n, nt))[2] + nt
-    givenscol!(H, j, k, err) # do nothing, if n >= nt
+    if j < nt
+        k = j+1
+        givenscol!(H, j, k, err) # do nothing, if n >= nt; H = H * Q
+    else
+        v, k = findmax(abs, view(H, (nt+1):n, nt))
+        k += nt
+        if v < abs(H[j, j]) * sqrt(eps(real(T))) # TODO change to new parameter in err?
+            H[k, nt] = zero(T)
+        end
+    end
     exrows!(H, j, k, 1:min(k, nt))
     exrows!(E, j, k, 1:min(k, nt))
     excols!(B, j, k, 1:n)
+    make_DH!(D, H, B, err, 1) # H .= D * H, B = B / D
     H, B
 end
 
@@ -72,24 +80,34 @@ function nint(x::T, y::T) where T<:Real
     end
 end
 
-integertype(::Type{T}) where T<:Real = typeof(Integer(zero(T)))
+function nint(x::T, y::T) where T<:Complex
+    integertype(T)(round(x / y))
+end
+integertype(::Type{T}) where T<:Real = typeof(Integer(real(T)(0)))
+integertype(::Type{T}) where T<:Complex = Complex{integertype(real(T))}
+integertype(::Type{BigFloat}) = BigInt
 
 # calculate D and D*H in one loop (modified Hermite reduction), also B /= D
-function make_DH!(DU::UnitLowerTriangular, H::AbstractMatrix, B::AbstractMatrix, err::ErrorEstimation)
+function make_DH!(DU::UnitLowerTriangular, H::AbstractMatrix, B::AbstractMatrix, err::ErrorEstimation, start::Int)
     n, t = check_H(H)
     nt = n - t
     E = err.E
-    for i = 2:n
+    for i = (start+1):n
         for j = 1:(i-1)
             DU[i, j] = 0
         end
+        j0 = start
         for j = min(i-1, nt):-1:1
-            q = nint(H[i, j], H[j, j]) # round to next integer
+            j < j0 && break
+            hjj = H[j, j]
+            q = iszero(hjj) ? zero(eltype(B)) : nint(H[i, j], hjj) # round to next integer
             if !iszero(q)
+                j0 = 1
                 for k = 1:j
                     DU[i, k] -= q * DU[j, k]
                     H[i, k] -= q * H[j, k]
                     E[i, k] += abs(q) * E[j, k]
+                    #clean_H!(err, i, k)
                 end
             end
         end
@@ -98,15 +116,18 @@ function make_DH!(DU::UnitLowerTriangular, H::AbstractMatrix, B::AbstractMatrix,
     DU, H, B
 end
 
-function make_H(X::AbstractVecOrMat{T}) where T<:Real
+function make_H(X::AbstractVecOrMat{T}) where T<:Number
     n, t = size(X, 1), size(X, 2)
     nt = n - t
     Y = float([X I[1:n, 1:(n-t)]])
     Q, R = qr(Y)
-    logabsdet(R)[1] > log(eps(eltype(R))) * 0.9 || throw(ArgumentError("Matrix is singular"))
+    logabsdet(R)[1] > log(eps(real(eltype(R)))) * 0.9 || throw(ArgumentError("Matrix is singular"))
     H = Q[:, (t+1):n]
     for j = 2:nt, i = 1:(j-1)
         H[i, j] = 0
+    end
+    for j = 1:nt
+        H[j, j] = Complex(real(H[j, j]))
     end
     H
 end
@@ -115,6 +136,7 @@ function givenscol!(H::Matrix, j::Integer, k::Integer, err::ErrorEstimation)
     if k > size(H, 2)
         return H
     end
+    HH = copy(H)
     E = err.E
     n = size(H, 1)
     a, b, c = H[j, j], H[k, j], H[k, k]
@@ -123,14 +145,22 @@ function givenscol!(H::Matrix, j::Integer, k::Integer, err::ErrorEstimation)
     c /= d
     H[k, j], H[k, k] = d, 0
     E[k, j], E[k, k] = E[k, j] + E[k, k], 0
-    H[j, j], H[j, k] = a * b, -a * c
+    H[j, j], H[j, k] = a * conj(b), -a * c
     E[j, j] = E[j, k] = E[k, k] + E[j, j]
+    #clean_H!(err, k, j); clean_H!(err, j, j);clean_H!(err, j, k)
     for i = (k+1):n
         u, v = H[i, j], H[i, k]
-        H[i, j], H[i, k] = u * b + v * c, -u * c + v * b
+        H[i, j], H[i, k] = u * conj(b) + v * conj(c), -u * c + v * b
         E[i, j] = E[i, k] = E[i, j] + E[i, k]
+        #clean_H!(err, i, j); clean_H!(err, i, k)
     end
+    Q = LinearAlgebra.Givens(j, k, (b), -(c))
     H
+end
+
+function printx(text, B, H)
+    BH = B * H
+    println(text, " norm((B*H)'*(B*H) - I): ", norm(BH'BH - I))
 end
 
 function exrows!(H::Matrix, i1::Integer, i2::Integer, r::UnitRange)
@@ -176,4 +206,22 @@ end
 function lqrefresh(A::Matrix, H::Matrix{BigFloat})
     L = Matrix(qr!(H' * A').R')
     refresh!(L)
+end
+
+function solution_column(sr::SirdResult)
+    B = sr.B
+    k = sr.col
+    if sr.code == SUCCESS
+        c = conj(view(B, :, k))
+        i = findfirst(x -> abs2(x) == 1, c)
+        if i !== nothing
+            ci = c[i]
+            if ci != 1
+                c .*= conj(ci)
+            end
+        end
+        c
+    else
+        vec(B[1:0])
+    end
 end

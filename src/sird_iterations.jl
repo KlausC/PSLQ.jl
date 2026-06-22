@@ -42,21 +42,20 @@ The result has teh following fields:
 
 The input criteria are transformed to object `cr` by method `make_criteria(criteria, x)`.
 """
-function sird(X::AbstractVecOrMat{T}; criteria...) where T<:Real
+function sird(X::AbstractVecOrMat{T}, ::Type{IT}=integertype(T); criteria...) where {T<:Number,IT}
     n, t = size(X, 1), size(X, 2)
     nt = n - t
     n > 0 && t > 0 && nt > 0 || throw(ArgumentError("no appropriate size of X: $(size(X))"))
-    criteria = make_criteria(criteria, X)
-    γ = criteria.γ
-    3γ^2 > 4 || throw(ArgumentError("γ must be > 2/√3"))
+    criteria = make_criteria(criteria, X, IT)
 
     H = make_H(X)
     B = Matrix{integertype(T)}(I, n, n)
     D = UnitLowerTriangular(similar(B)) # working area
     err = ErrorEstimation(H)
+    make_DH!(D, H, B, err, 1) # H .= D * H, B = B / D
     while true
         increase_iter(err)
-        sird_step!(γ, H, B, D, err)
+        sird_step!(criteria.γ, H, B, D, err)
         result = convergence(X, H, B, err, criteria)
         result.code != CONTINUE && return result
     end
@@ -133,7 +132,7 @@ function check_evaluation(X::AbstractVecOrMat{T}, B::AbstractMatrix, criteria) w
         s1 = T(0)
         s2 = real(T)(0)
         for k = 1:n
-            bkjx = B[k, j] * X[k, i]
+            bkjx = conj(B[k, j]) * X[k, i]
             s1 += bkjx
             s2 += abs(bkjx)
         end
@@ -159,14 +158,28 @@ function check_evaluation(X::AbstractVecOrMat{T}, B::AbstractMatrix, criteria) w
     return 0
 end
 
-make_criteria(criteria::Base.Pairs, x) = make_criteria(values(criteria), x)
-function make_criteria(arguments::NamedTuple, x)
-    rtol = get(arguments, :rtol) do; 10*eps(float(eltype(x))) end
+make_criteria(criteria::Base.Pairs, args...) = make_criteria(values(criteria), args...)
+
+function make_criteria(arguments::NamedTuple, x, ::Type{IT}) where IT
+    rtol = get(arguments, :rtol) do; 10*eps(float(real(eltype(x)))) end
     atol = get(arguments, :atol) do; 10*eps(norm(x)) end
     itermax = get(arguments, :itermax, 10000)
     elimit = get(arguments, :elimit, 1e20)
-    γ = get(arguments, :γ, 2.0)
-    return (;rtol, atol, itermax, elimit, γ)
+    ρ2 = IT <: Real ? 4.0 : IT <: Complex ? 2.0 : 1.0
+    τ = get(arguments, :τ, 0.0)
+    γ = get(arguments, :γ, 0.0)
+    !iszero(τ) && !iszero(γ) && throw(ArgumentError("can only specify one of τ and γ"))
+    if iszero(τ) && iszero(γ)
+        γ = 2.0
+    end
+    if !iszero(τ)
+        γ = τ / sqrt(1 - τ^2/ρ2)
+    else
+        τ = γ / sqrt(1 + γ^2 / ρ2)
+    end
+    1 <= τ^2 <= ρ2 || throw(ArgumentError("Invalid parameters τ and γ"))
+    ρ = sqrt(ρ2)
+    return (;rtol, atol, itermax, elimit, γ, τ, ρ)
 end
 
 function condition_relabs(x, y, criteria)
