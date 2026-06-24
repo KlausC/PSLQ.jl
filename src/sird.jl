@@ -21,7 +21,10 @@ function sird_step!(γ::Real, H::Matrix{T}, B::Matrix{Ti}, D::AbstractMatrix{Ti}
         v, k = findmax(abs, view(H, (nt+1):n, nt))
         k += nt
         if v < abs(H[j, j]) * sqrt(eps(real(T))) # TODO change to new parameter in err?
-            H[k, nt] = zero(T)
+            H[(nt+1):n, nt] .= zero(T)
+        else
+            s = conj(sign(H[k, nt]))
+            H[nt:n, nt] .*= s
         end
     end
     exrows!(H, j, k, 1:min(k, nt))
@@ -133,10 +136,10 @@ function make_H(X::AbstractVecOrMat{T}) where T<:Number
 end
 
 function givenscol!(H::Matrix, j::Integer, k::Integer, err::ErrorEstimation)
-    if k > size(H, 2)
+    n, nt = size(H)
+    if k > nt
         return H
     end
-    HH = copy(H)
     E = err.E
     n = size(H, 1)
     a, b, c = H[j, j], H[k, j], H[k, k]

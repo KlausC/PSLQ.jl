@@ -168,6 +168,7 @@ make_criteria(criteria::Base.Pairs, args...) = make_criteria(values(criteria), a
 function make_criteria(arguments::NamedTuple, x, ::Type{IT}) where IT
     rtol = get(arguments, :rtol) do; 10*eps(float(real(eltype(x)))) end
     atol = get(arguments, :atol) do; 10*eps(norm(x)) end
+    atol *= 0.0
     itermax = get(arguments, :itermax, 10000)
     elimit = get(arguments, :elimit, 1e20)
     ρ2 = IT <: Real ? 4.0 : IT <: Complex ? 2.0 : 1.0
@@ -193,9 +194,11 @@ end
 
 function condition_small_diag(err, criteria)
     H = err.H
-    E = err.E
-    nt = size(H, 2)
-    condition_relabs(H[nt, nt], ldexp(E[nt, nt], err.iter), criteria)
+    n, nt = size(H)
+    hjj = abs2(H[nt,nt])
+    #iszero(hjj) && return true
+    hmax = maximum(abs2, view(H, nt+1:n, nt)) # hjj/hmax <= sqrt(ϵ) !sr.
+    condition_relabs(hjj, hmax, criteria)
 end
 
 function condition_normlimit(err, criteria)
